@@ -78,60 +78,72 @@ def procesar_imagen_con_puntos(image_np):
 
 
 @app.route('/upload', methods=['POST'])
-def detectar_puntos_y_procesar_imagenes():
-    """Procesa la imagen, detecta puntos faciales y emociones."""
+def detectar_puntos_y_generar_pdf():
     if 'file' not in request.files:
-        return jsonify({'error': 'No se recibió correctamente la imagen'})
+        return jsonify({'error': 'No se recibió correctamente la imagen'}), 400
 
     archivo = request.files['file']
     if archivo.filename == '':
-        return jsonify({'error': 'No se cargó ninguna imagen'})
+        return jsonify({'error': 'No se cargó ninguna imagen'}), 400
 
     try:
-        # Leer y procesar la imagen original
-        imagen_pil = Image.open(archivo).convert('RGB')
-        imagen_pil = imagen_pil.resize((300, 300))  # Reducir resolución para ahorrar recursos
+        # 1) Abrir y preprocesar imagen
+        imagen_pil = Image.open(archivo).convert('RGB').resize((300, 300))
         imagen_np = np.array(imagen_pil)
-
-        # Mejorar la imagen (contraste y nitidez)
         imagen_mejorada = ImageEnhance.Contrast(imagen_pil).enhance(1.5)
         imagen_mejorada = ImageEnhance.Sharpness(imagen_mejorada).enhance(2.0)
 
-        # Detectar puntos faciales
+        # 2) Dibujar puntos faciales
         imagen_con_puntos = procesar_imagen_con_puntos(imagen_np)
 
-        # Detectar emociones usando FER
-        detector = FER(mtcnn=False)  # Desactivar MTCNN para reducir el consumo de recursos
+        # 3) Detectar emoción
+        detector = FER(mtcnn=False)
         emociones = detector.detect_emotions(np.array(imagen_mejorada))
         if emociones:
-            emocion_principal_en = max(emociones[0]["emotions"], key=emociones[0]["emotions"].get)
-            emocion_principal = TRADUCCION_EMOCIONES.get(emocion_principal_en, emocion_principal_en)
+            emo_en = max(emociones[0]["emotions"], key=emociones[0]["emotions"].get)
+            emocion = TRADUCCION_EMOCIONES.get(emo_en, emo_en)
         else:
-            emocion_principal = "No se detectaron emociones"
+            emocion = "No se detectaron emociones"
 
-        # Subir imagen a Google Drive
-        service = obtener_servicio_drive()
-        buffered = io.BytesIO()
-        imagen_pil.save(buffered, format="PNG")
-        archivo_drive = MediaIoBaseUpload(buffered, mimetype='image/png')
-        archivo_metadata = {
-            'name': archivo.filename,
-            'mimeType': 'image/png',
-            'parents': [FOLDER_ID]
-        }
-        archivo_drive_subido = service.files().create(body=archivo_metadata, media_body=archivo_drive).execute()
+        # 4) (Opcional) subir la imagen original a Drive...
+        #    — tu código actual de obtener_servicio_drive() y subida —
 
-        # Convertir la imagen procesada a Base64
-        img_data_puntos = convertir_a_base64(imagen_con_puntos)
+        # 5) Generar PDF en memoria
+        pdf_buffer = io.BytesIO()
+        c = canvas.Canvas(pdf_buffer, pagesize=letter)
+        width, height = letter  # 612×792 puntos
 
-        return jsonify({
-            'image_with_points_base64': img_data_puntos,
-            'dominant_emotion': emocion_principal,
-            'drive_id': archivo_drive_subido.get('id')
-        })
+        # Dibujar la imagen con puntos en el PDF
+        img_io = io.BytesIO()
+        imagen_con_puntos.save(img_io, format='PNG')
+        img_io.seek(0)
+        # Ajusta el tamaño/posición a tu gusto:
+        img_width = 300
+        img_height = 300
+        x_img = (width - img_width) / 2
+        y_img = height - img_height - 100
+        c.drawImage(ImageReader(img_io), x_img, y_img, img_width, img_height)
+
+        # Escribir el texto de la emoción
+        text_x = 50
+        text_y = y_img - 50
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(text_x, text_y, f"Emoción detectada: {emocion}")
+
+        c.showPage()
+        c.save()
+        pdf_buffer.seek(0)
+
+        # 6) Devolver el PDF
+        return send_file(
+            pdf_buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name='resultado.pdf'
+        )
 
     except Exception as e:
-        return jsonify({'error': f"Error al procesar la imagen: {str(e)}"})
+        return jsonify({'error': f"Error al procesar la imagen: {e}"}), 500
 
 
 if __name__ == '__main__':
