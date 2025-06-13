@@ -12,6 +12,10 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from dotenv import load_dotenv
 from fer import FER
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+from flask import send_file
 
 app = Flask(__name__)
 CORS(app)
